@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LearningHub Evaluaciones</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    body { background: #f8fafc; color: #0f172a; }
+    .card { box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); }
+    .input { border: 1px solid #e2e8f0; border-radius: 14px; padding: 10px 12px; width: 100%; }
+    .input:focus { outline: 2px solid #f43f5e; border-color: #f43f5e; }
+    .pill { border-radius: 9999px; }
+    .bg-muted\/40 { background-color: rgba(148, 163, 184, 0.12); }
+  </style>
+</head>
+<body class="min-h-screen p-6 md:p-10">
+  <div id="app"></div>
+
+  <script>
+    const { createApp, reactive, computed, onMounted, onUpdated, watch, nextTick } = Vue;
+
+    const uid = () => Math.random().toString(36).slice(2, 9);
+
+    const shuffle = (arr) => {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+
+    const questionTypes = [
+      { value: 'multiple', label: 'Opcion Multiple', icon: 'sparkles' },
+      { value: 'checkbox', label: 'Casillas de Verificacion', icon: 'check-square' },
+      { value: 'truefalse', label: 'Verdadero / Falso', icon: 'check-check' },
+      { value: 'matching', label: 'Emparejamiento', icon: 'move-horizontal' },
+      { value: 'ordering', label: 'Ordenar Elementos', icon: 'arrow-up-down' },
+      { value: 'blanks', label: 'Completar Espacios', icon: 'pilcrow' },
+    ];
+
+    const blankSentenceHelp = 'Escribe "[blank]" para indicar donde debe ir una palabra del banco.';
+
+    const defaultQuestionByType = (type) => {
+      const base = { id: uid(), type, prompt: '', feedback: '', correctAnswers: [] };
+      if (type === 'multiple' || type === 'checkbox') {
+        const opts = [ { id: uid(), text: 'Opcion 1' }, { id: uid(), text: 'Opcion 2' } ];
+        return { ...base, options: opts };
+      }
+      if (type === 'truefalse') {
+        const opts = [ { id: 'true', text: 'Verdadero' }, { id: 'false', text: 'Falso' } ];
+        return { ...base, options: opts, correctAnswers: ['true'] };
+      }
+      if (type === 'matching') {
+        const pairs = [ { id: uid(), left: 'Elemento A1', right: 'Elemento B1' }, { id: uid(), left: 'Elemento A2', right: 'Elemento B2' } ];
+        return { ...base, pairs, correctAnswers: pairs.map(p => ({ leftId: p.id, right: p.right })) };
+      }
+      if (type === 'ordering') {
+        const order = [ { id: uid(), text: 'Paso 1' }, { id: uid(), text: 'Paso 2' } ];
+        return { ...base, order, correctAnswers: order.map(o => o.id) };
+      }
+      if (type === 'blanks') {
+        const blanks = [ { id: uid(), placeholder: 'palabra1', answers: ['palabra1'] } ];
+        return { ...base, sentence: 'Oracion con un [blank].', blanks, correctAnswers: blanks.map(b => ({ blankId: b.id, answers: b.answers })) };
+      }
+      return base;
+    };
+
+    createApp({
+      setup() {
+        const state = reactive({
+          mode: 'create',
+          schema: {
+            title: 'Nueva Evaluacion',
+            description: '',
+            attempts: 3,
+            minPercent: 80,
+            questions: [],
+          },
+          selectedType: questionTypes[0],
+          showTypeMenu: false,
+          answers: {},
+          currentQuestion: 0,
+          result: null,
+          receivedConfig: {},
+          dragIndex: null,
+          childDrag: null,
+          displayOrder: {},
+          matchingRightOrder: {},
+        });
+
+        const queryMode = () => {
+          const params = new URLSearchParams(window.location.search);
+          const m = params.get('mode');
+          if (m && ['create', 'edit', 'answer'].includes(m)) return m;
+          return 'create';
+        };
+
+        const sendMessage = (payload) => {
+          window.parent.postMessage(payload, '*');
+        };
+
+        const renderIcons = () => {
+          nextTick(() => {
+            lucide.createIcons();
+          });
+        };
+
+        const ensureOptionShuffle = (q) => {
+          if (state.mode !== 'answer' || !q || !q.options) return;
+          if (!state.displayOrder[q.id]) {
+            state.displayOrder[q.id] = shuffle(q.options.map(o => o.id));
+          }
+        };
+
+        const shuffledOptions = (q) => {
+          ensureOptionShuffle(q);
+          const order = state.displayOrder[q.id] || q.options.map(o => o.id);
+          const byId = new Map(q.options.map(o => [o.id, o]));
+          return order.map(id => byId.get(id)).filter(Boolean);
+        };
+
+        const ensureMatchingShuffle = (q) => {
+          if (state.mode !== 'answer' || !q || !q.pairs) return;
+          if (!state.matchingRightOrder[q.id]) {
+            state.matchingRightOrder[q.id] = shuffle(q.pairs.map(p => p.right));
+          }
+        };
+
+        const shuffledRights = (q) => {
+          ensureMatchingShuffle(q);
+          return state.matchingRightOrder[q.id] || q.pairs.map(p => p.right);
+        };
+
+        const initOrdering = (q) => {
+          if (state.mode !== 'answer' || !q || !q.order) return;
+          if (!state.answers[q.id]) {
+            state.answers[q.id] = shuffle(q.order.map(o => o.id));
+          }
+        };
+
+        const getShuffledBlankWords = (q) => {
+          if (!q || !q.blanks) return [];
+          if (!state.displayOrder[q.id + '-words']) {
+            const words = q.blanks.map(b => (b.answers && b.answers[0]) || b.placeholder || '').filter(Boolean);
+            state.displayOrder[q.id + '-words'] = shuffle(words);
+          }
+          return state.displayOrder[q.id + '-words'];
+        };
+
+        const renderSentenceWithBlanks = (sentence, blanks) => {
+          if (!sentence || !blanks || !blanks.length) return sentence;
+          const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+          const blankWords = blanks.map(b => (b.answers && b.answers[0]) || b.placeholder || '').filter(Boolean);
+          let result = sentence;
+          blankWords.forEach((word, idx) => {
+            const color = colors[idx % colors.length];
+            const regex = new RegExp(`\\b${word}\\b`, 'gi');
+            const boxHtml = `<span style="background-color:${color}40;border:2px solid ${color};border-radius:6px;padding:2px 6px;font-weight:500;">${word}</span>`;
+            result = result.replace(regex, boxHtml);
+          });
+          return result;
+        };
+
+        const renderAnswerBlanks = (sentence, blanks, questionId) => {
+          if (!sentence || !blanks || !blanks.length) return sentence;
+          const blankWords = blanks.map(b => ({ word: (b.answers && b.answers[0]) || b.placeholder || '', id: b.id })).filter(b => b.word);
+          let result = sentence;
+          blankWords.forEach((blank) => {
+            const regex = new RegExp(`\\b${blank.word}\\b`, 'i');
+            const inputId = `blank-${questionId}-${blank.id}`;
+            const inputHtml = `<input type="text" id="${inputId}" data-blank-id="${blank.id}" class="inline-blank-input" style="border:none;border-bottom:2px solid #f43f5e;background:transparent;outline:none;padding:2px 8px;min-width:100px;text-align:center;font-size:inherit;margin:0 2px;" />`;
+            result = result.replace(regex, inputHtml);
+          });
+          return result;
+        };
+
+        const addQuestion = (type) => {
+          const q = defaultQuestionByType(type);
+          state.schema.questions.push(q);
+          renderIcons();
+        };
+
+        const selectType = (t) => {
+          state.selectedType = t;
+          state.showTypeMenu = false;
+          renderIcons();
+        };
+
+        const toggleTypeMenu = () => {
+          state.showTypeMenu = !state.showTypeMenu;
+          renderIcons();
+        };
+
+        const removeQuestion = (id) => {
+          state.schema.questions = state.schema.questions.filter(q => q.id !== id);
+        };
+
+        const moveQuestion = (index, delta) => {
+          const target = index + delta;
+          if (target < 0 || target >= state.schema.questions.length) return;
+          const list = state.schema.questions;
+          const [item] = list.splice(index, 1);
+          list.splice(target, 0, item);
+          renderIcons();
+        };
+
+        const startDrag = (index) => {
+          state.dragIndex = index;
+        };
+
+        const onDragOver = (index, event) => {
+          event.preventDefault();
+          if (state.dragIndex === null || state.dragIndex === index) return;
+          const list = state.schema.questions;
+          const [item] = list.splice(state.dragIndex, 1);
+          list.splice(index, 0, item);
+          state.dragIndex = index;
+          renderIcons();
+        };
+
+        const endDrag = () => {
+          state.dragIndex = null;
+          renderIcons();
+        };
+
+        const startChildDrag = (qId, listKey, index) => {
+          state.childDrag = { qId, listKey, index };
+        };
+
+        const onChildDragOver = (qId, listKey, index, event) => {
+          event.preventDefault();
+          const drag = state.childDrag;
+          if (!drag || drag.qId !== qId || drag.listKey !== listKey || drag.index === index) return;
+          const q = state.schema.questions.find(item => item.id === qId);
+          if (!q || !q[listKey]) return;
+          const list = q[listKey];
+          const [item] = list.splice(drag.index, 1);
+          list.splice(index, 0, item);
+          drag.index = index;
+          if (listKey === 'order') q.correctAnswers = q.order.map(o => o.id);
+          renderIcons();
+        };
+
+        const endChildDrag = () => {
+          state.childDrag = null;
+          renderIcons();
+        };
+
+        const addOption = (q) => {
+          q.options.push({ id: uid(), text: 'Nueva opcion' });
+        };
+
+        const removeOption = (q, optionId) => {
+          q.options = q.options.filter(o => o.id !== optionId);
+          q.correctAnswers = q.correctAnswers.filter(c => c !== optionId);
+        };
+
+        const toggleCorrect = (q, optionId, isMulti) => {
+          if (!isMulti) q.correctAnswers = [optionId];
+          else {
+            if (q.correctAnswers.includes(optionId)) {
+              q.correctAnswers = q.correctAnswers.filter(id => id !== optionId);
+            } else {
+              q.correctAnswers = [...q.correctAnswers, optionId];
+            }
+          }
+        };
+
+        const addPair = (q) => {
+          const p = { id: uid(), left: 'Elemento', right: 'Emparejar' };
+          q.pairs.push(p);
+          q.correctAnswers.push({ leftId: p.id, right: p.right });
+        };
+
+        const removePair = (q, pairId) => {
+          q.pairs = q.pairs.filter(p => p.id !== pairId);
+          q.correctAnswers = q.correctAnswers.filter(p => p.leftId !== pairId);
+        };
+
+        const addOrderItem = (q) => {
+          const item = { id: uid(), text: 'Nuevo paso' };
+          q.order.push(item);
+          q.correctAnswers = q.order.map(o => o.id);
+        };
+
+        const removeOrderItem = (q, itemId) => {
+          q.order = q.order.filter(o => o.id !== itemId);
+          q.correctAnswers = q.order.map(o => o.id);
+        };
+
+        const addBlank = (q) => {
+          const b = { id: uid(), placeholder: 'nueva palabra', answers: [''] };
+          q.blanks.push(b);
+          q.correctAnswers.push({ blankId: b.id, answers: b.answers });
+        };
+
+        const removeBlank = (q, blankId) => {
+          q.blanks = q.blanks.filter(b => b.id !== blankId);
+          q.correctAnswers = q.correctAnswers.filter(b => b.blankId !== blankId);
+        };
+
+        const ensureCorrectDefaults = (q) => {
+          if (q.type === 'truefalse' && (!q.correctAnswers || !q.correctAnswers.length)) {
+            q.correctAnswers = ['true'];
+          }
+          if (q.type === 'ordering') {
+            q.correctAnswers = q.order.map(o => o.id);
+          }
+          if (q.type === 'matching') {
+            q.correctAnswers = q.pairs.map(p => ({ leftId: p.id, right: p.right }));
+          }
+          if (q.type === 'blanks') {
+            q.correctAnswers = q.blanks.map(b => ({ blankId: b.id, answers: b.answers }));
+          }
+        };
+
+        const validateSchema = () => {
+          if (!state.schema.questions.length) return { ok: false, message: 'Agrega al menos una pregunta.' };
+          for (const q of state.schema.questions) {
+            if (!q.prompt.trim()) return { ok: false, message: 'Cada pregunta necesita un enunciado.' };
+            if (['multiple', 'checkbox', 'truefalse'].includes(q.type)) {
+              if (!q.options || !q.options.length) return { ok: false, message: 'La pregunta necesita opciones.' };
+              if (!q.correctAnswers || !q.correctAnswers.length) return { ok: false, message: 'Selecciona respuestas correctas.' };
+            }
+            if (q.type === 'matching') {
+              if (!q.pairs || !q.pairs.length) return { ok: false, message: 'Agrega pares para emparejar.' };
+            }
+            if (q.type === 'ordering') {
+              if (!q.order || q.order.length < 2) return { ok: false, message: 'Agrega al menos dos pasos.' };
+            }
+            if (q.type === 'blanks') {
+              if (!q.sentence || !q.sentence.trim()) return { ok: false, message: 'Escribe la oracion completa.' };
+              if (!q.blanks || !q.blanks.length) return { ok: false, message: 'Agrega palabras al banco.' };
+            }
+          }
+          return { ok: true };
+        };
+
+        const emitSchemaUpdate = () => {
+          if (state.mode === 'answer') return;
+          sendMessage({ type: 'schema-update', payload: { questions: JSON.parse(JSON.stringify(state.schema.questions)) } });
+        };
+
+        const receiveMessage = (event) => {
+          const { data } = event;
+          if (!data || typeof data !== 'object') return;
+          if (data.type === 'schema') {
+            state.schema = { ...state.schema, ...data.payload };
+          }
+          if (data.type === 'config') {
+            state.receivedConfig = data.payload || {};
+            if (data.payload.attempts) state.schema.attempts = data.payload.attempts;
+            if (data.payload.minPercent) state.schema.minPercent = data.payload.minPercent;
+          }
+          if (data.type === 'mode') {
+            state.mode = data.payload;
+          }
+        };
+
+        const selectMode = () => {
+          state.mode = queryMode();
+          sendMessage({ type: 'form-ready' });
+          if (state.mode !== 'create') sendMessage({ type: 'schema-request' });
+        };
+
+        const activeQuestion = computed(() => state.schema.questions[state.currentQuestion] || null);
+        const totalQuestions = computed(() => state.schema.questions.length);
+        const progressPercent = computed(() => {
+          if (!totalQuestions.value) return 0;
+          return Math.round(((state.currentQuestion + 1) / totalQuestions.value) * 100);
+        });
+
+        const answerQuestion = (questionId, value) => {
+          state.answers[questionId] = value;
+        };
+
+        const orderingList = (q) => {
+          if (!q) return [];
+          const ids = state.answers[q.id] || q.order.map(o => o.id);
+          return ids.map(id => q.order.find(o => o.id === id)).filter(Boolean);
+        };
+
+        const moveOrdering = (q, itemId, delta) => {
+          const current = state.answers[q.id] || q.order.map(o => o.id);
+          const pos = current.indexOf(itemId);
+          if (pos === -1) return;
+          const target = pos + delta;
+          if (target < 0 || target >= current.length) return;
+          const next = [...current];
+          next.splice(pos, 1);
+          next.splice(target, 0, itemId);
+          answerQuestion(q.id, next);
+        };
+
+        const isCorrect = (q, value) => {
+          if (!q) return false;
+          if (q.type === 'multiple' || q.type === 'truefalse') {
+            return q.correctAnswers && q.correctAnswers[0] === value;
+          }
+          if (q.type === 'checkbox') {
+            const target = new Set(q.correctAnswers || []);
+            const given = new Set(value || []);
+            if (target.size !== given.size) return false;
+            for (const v of target) if (!given.has(v)) return false;
+            return true;
+          }
+          if (q.type === 'matching') {
+            if (!value || !q.correctAnswers) return false;
+            const map = new Map(value.map(v => [v.leftId, v.right]));
+            for (const pair of q.correctAnswers) {
+              if (map.get(pair.leftId) !== pair.right) return false;
+            }
+            return true;
+          }
+          if (q.type === 'ordering') {
+            if (!value || value.length !== q.correctAnswers.length) return false;
+            return value.every((v, idx) => v === q.correctAnswers[idx]);
+          }
+          if (q.type === 'blanks') {
+            if (!value) return false;
+            for (const blank of q.correctAnswers) {
+              const given = (value[blank.blankId] || '').trim().toLowerCase();
+              const accepted = (blank.answers || []).map(a => a.trim().toLowerCase());
+              if (!accepted.includes(given)) return false;
+            }
+            return true;
+          }
+          return false;
+        };
+
+        const computeResults = () => {
+          const perQuestion = state.schema.questions.map(q => {
+            const value = state.answers[q.id];
+            const correct = isCorrect(q, value);
+            return { id: q.id, correct };
+          });
+          const correctCount = perQuestion.filter(r => r.correct).length;
+          const total = perQuestion.length || 1;
+          const scorePercent = Math.round((correctCount / total) * 100);
+          const passed = scorePercent >= (state.schema.minPercent || 0);
+          const resultPayload = {
+            answers: JSON.parse(JSON.stringify(state.answers)),
+            scorePercent,
+            correctCount,
+            total,
+            passed
+          };
+          state.result = resultPayload;
+          sendMessage({ type: 'result', payload: resultPayload });
+        };
+
+        const nextQuestion = () => {
+          if (state.currentQuestion < totalQuestions.value - 1) {
+            state.currentQuestion += 1;
+            return;
+          }
+          computeResults();
+        };
+
+        const prevQuestion = () => {
+          if (state.currentQuestion > 0) state.currentQuestion -= 1;
+        };
+
+        onMounted(() => {
+          window.addEventListener('message', receiveMessage);
+          selectMode();
+          renderIcons();
+        });
+
+        onUpdated(() => {
+          renderIcons();
+        });
+
+        watch(() => state.schema.questions.length, () => {
+          renderIcons();
+        });
+
+        watch(() => state.currentQuestion, () => {
+          const q = activeQuestion.value;
+          if (!q) return;
+          if (q.type === 'ordering') initOrdering(q);
+          if (q.type === 'multiple' || q.type === 'checkbox' || q.type === 'truefalse') ensureOptionShuffle(q);
+          if (q.type === 'matching') ensureMatchingShuffle(q);
+        });
+
+        watch(() => state.schema.questions, () => {
+          emitSchemaUpdate();
+          renderIcons();
+          // Sync blank placeholder changes to answers
+          state.schema.questions.forEach(q => {
+            if (q.type === 'blanks' && q.blanks) {
+              q.blanks.forEach(b => {
+                if (b.placeholder && (!b.answers || b.answers[0] !== b.placeholder)) {
+                  b.answers = [b.placeholder];
+                  const correct = q.correctAnswers.find(c => c.blankId === b.id);
+                  if (correct) correct.answers = [b.placeholder];
+                }
+              });
+            }
+          });
+        }, { deep: true });
+
+        return {
+          state,
+          questionTypes,
+          blankSentenceHelp,
+          addQuestion,
+          selectType,
+          toggleTypeMenu,
+          removeQuestion,
+          moveQuestion,
+          startDrag,
+          onDragOver,
+          endDrag,
+          addOption,
+          removeOption,
+          toggleCorrect,
+          addPair,
+          removePair,
+          addOrderItem,
+          removeOrderItem,
+          addBlank,
+          removeBlank,
+          ensureCorrectDefaults,
+          emitSchemaUpdate,
+          activeQuestion,
+          totalQuestions,
+          progressPercent,
+          answerQuestion,
+          orderingList,
+          moveOrdering,
+          shuffledOptions,
+          shuffledRights,
+          renderSentenceWithBlanks,
+          renderAnswerBlanks,
+          getShuffledBlankWords,
+          nextQuestion,
+          prevQuestion,
+          renderIcons,
+          startChildDrag,
+          onChildDragOver,
+          endChildDrag,
+        };
+      },
+      template: `
+        <div class="max-w-6xl mx-auto">
+
+          <div v-if="state.mode !== 'answer'" class="grid gap-4 mb-8">
+            <div v-if="!state.schema.questions.length" class="text-slate-500 text-sm">Añade preguntas para comenzar.</div>
+
+            <div
+              v-for="(q, index) in state.schema.questions"
+              :key="q.id"
+              class="bg-muted/40 card rounded-2xl p-5 border border-slate-200"
+              @dragover="onDragOver(index, $event)"
+            >
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-3">
+                  <button
+                    class="p-2 rounded-lg border cursor-grab active:cursor-grabbing"
+                    draggable="true"
+                    @dragstart="startDrag(index)"
+                    @dragend="endDrag"
+                    aria-label="Reordenar"
+                  >
+                    <i data-lucide="grip-vertical" class="w-4 h-4"></i>
+                  </button>
+                  <div>
+                    <p class="text-sm text-slate-500">Pregunta {{ index + 1 }}</p>
+                    <p class="font-semibold capitalize">{{ questionTypes.find(t => t.value === q.type)?.label }}</p>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button @click="moveQuestion(index, -1)" class="p-2 rounded-lg border" aria-label="Subir">
+                    <i data-lucide="arrow-up" class="w-4 h-4"></i>
+                  </button>
+                  <button @click="moveQuestion(index, 1)" class="p-2 rounded-lg border" aria-label="Bajar">
+                    <i data-lucide="arrow-down" class="w-4 h-4"></i>
+                  </button>
+                  <button @click="removeQuestion(q.id)" class="text-rose-500" aria-label="Eliminar">
+                    <i data-lucide="trash" class="w-5 h-5"></i>
+                  </button>
+                </div>
+              </div>
+
+                <div class="space-y-3 bg-white/60 rounded-2xl p-3">
+                <textarea v-model="q.prompt" @blur="ensureCorrectDefaults(q)" class="input" rows="3" placeholder="Nueva pregunta" aria-label="Enunciado"></textarea>
+
+                <div v-if="q.type === 'multiple' || q.type === 'checkbox'">
+                  <p class="text-sm font-semibold mb-2">Opciones</p>
+                  <div class="space-y-2">
+                    <div v-for="option in q.options" :key="option.id" class="flex items-center gap-2">
+                      <input :type="q.type === 'multiple' ? 'radio' : 'checkbox'" :name="q.id" :checked="q.correctAnswers.includes(option.id)" @change="toggleCorrect(q, option.id, q.type === 'checkbox')" aria-label="Correcta" />
+                      <input v-model="option.text" class="input" aria-label="Texto de opcion" />
+                      <button @click="removeOption(q, option.id)" class="text-rose-500" aria-label="Eliminar opcion">
+                        <i data-lucide="trash" class="w-4 h-4"></i>
+                      </button>
+                    </div>
+                    <button @click="addOption(q)" class="px-3 py-1 border rounded-lg text-sm" aria-label="Añadir opcion">Añadir Opcion</button>
+                  </div>
+                </div>
+
+                <div v-if="q.type === 'truefalse'">
+                  <p class="text-sm font-semibold mb-2">Selecciona la respuesta correcta</p>
+                  <div class="flex items-center gap-4">
+                    <label class="flex items-center gap-2">
+                      <input type="radio" :name="q.id" value="true" :checked="q.correctAnswers.includes('true')" @change="toggleCorrect(q, 'true', false)" /> Verdadero
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <input type="radio" :name="q.id" value="false" :checked="q.correctAnswers.includes('false')" @change="toggleCorrect(q, 'false', false)" /> Falso
+                    </label>
+                  </div>
+                </div>
+
+                <div v-if="q.type === 'matching'">
+                  <p class="text-sm font-semibold mb-2">Pares a emparejar</p>
+                  <div class="space-y-2">
+                    <div
+                      v-for="(pair, pIndex) in q.pairs"
+                      :key="pair.id"
+                      class="grid grid-cols-[32px_1fr_1fr] gap-2 items-center bg-white border rounded-2xl p-2"
+                      draggable="true"
+                      @dragstart="startChildDrag(q.id, 'pairs', pIndex)"
+                      @dragover="onChildDragOver(q.id, 'pairs', pIndex, $event)"
+                      @dragend="endChildDrag"
+                    >
+                      <button class="p-2 rounded-lg border bg-white" aria-label="Reordenar par">
+                        <i data-lucide="grip-vertical" class="w-4 h-4 text-slate-400"></i>
+                      </button>
+                      <input v-model="pair.left" class="input" aria-label="Izquierda" />
+                      <div class="flex gap-2 items-center">
+                        <input v-model="pair.right" class="input flex-1" aria-label="Derecha" />
+                        <button @click="removePair(q, pair.id)" class="text-rose-500" aria-label="Eliminar par">
+                          <i data-lucide="trash" class="w-4 h-4"></i>
+                        </button>
+                      </div>
+                    </div>
+                    <button @click="addPair(q)" class="px-3 py-1 border rounded-lg text-sm" aria-label="Añadir par">Añadir Par</button>
+                  </div>
+                </div>
+
+                <div v-if="q.type === 'ordering'">
+                  <p class="text-sm font-semibold mb-2">Elementos en orden correcto</p>
+                  <div class="space-y-2">
+                    <div
+                      v-for="(item, oIndex) in q.order"
+                      :key="item.id"
+                      class="flex gap-2 items-center bg-white border rounded-2xl p-2"
+                      draggable="true"
+                      @dragstart="startChildDrag(q.id, 'order', oIndex)"
+                      @dragover="onChildDragOver(q.id, 'order', oIndex, $event)"
+                      @dragend="endChildDrag"
+                    >
+                      <i data-lucide="grip-vertical" class="w-4 h-4 text-slate-400"></i>
+                      <input v-model="item.text" class="input" aria-label="Paso" />
+                      <button @click="removeOrderItem(q, item.id)" class="text-rose-500" aria-label="Eliminar paso">
+                        <i data-lucide="trash" class="w-4 h-4"></i>
+                      </button>
+                    </div>
+                    <button @click="addOrderItem(q)" class="px-3 py-1 border rounded-lg text-sm" aria-label="Añadir paso">Añadir Elemento</button>
+                  </div>
+                </div>
+
+                <div v-if="q.type === 'blanks'">
+                  <p class="text-sm font-semibold mb-2">Oracion con espacios</p>
+                  <textarea v-model="q.sentence" class="input" rows="3" placeholder="Escribe la oracion completa con las palabras que seran espacios en blanco" aria-label="Oracion"></textarea>
+                  <p class="text-xs text-slate-500 mb-2">Las palabras del Banco seran convertidas en espacios en blanco.</p>
+                  <div v-if="q.sentence && q.blanks && q.blanks.length" class="bg-slate-50 border rounded-xl p-3 mb-3">
+                    <p class="text-xs text-slate-500 mb-2">Vista previa:</p>
+                    <p class="text-sm" v-html="renderSentenceWithBlanks(q.sentence, q.blanks)"></p>
+                  </div>
+                  <div class="space-y-2 mt-2">
+                    <p class="text-sm font-semibold">Banco de palabras</p>
+                    <div v-for="b in q.blanks" :key="b.id" class="flex gap-2 items-center">
+                      <input v-model="b.placeholder" class="input" aria-label="Palabra" />
+                      <button @click="removeBlank(q, b.id)" class="text-rose-500" aria-label="Eliminar palabra">
+                        <i data-lucide="trash" class="w-4 h-4"></i>
+                      </button>
+                    </div>
+                    <button @click="addBlank(q)" class="px-3 py-1 border rounded-lg text-sm" aria-label="Añadir palabra">Añadir Palabra</button>
+                  </div>
+                </div>
+              </div>
+
+              
+            </div>
+            <div class="flex items-center gap-3 pt-4">
+              <div class="relative">
+                <button @click="toggleTypeMenu" class="px-4 py-2 bg-white border rounded-xl flex items-center gap-2">
+                  <i :data-lucide="state.selectedType.icon" class="w-5 h-5"></i>
+                  <span class="font-medium">{{ state.selectedType.label }}</span>
+                  <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                </button>
+                <div v-if="state.showTypeMenu" class="absolute z-10 mt-2 bg-white border rounded-2xl shadow-xl w-64 p-2">
+                  <button
+                    v-for="t in questionTypes"
+                    :key="t.value"
+                    @click="selectType(t)"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-50 text-left"
+                  >
+                    <i :data-lucide="t.icon" class="w-5 h-5"></i>
+                    <span class="flex-1">{{ t.label }}</span>
+                    <span v-if="state.selectedType.value === t.value" class="text-rose-500">✓</span>
+                  </button>
+                </div>
+              </div>
+              <button @click="addQuestion(state.selectedType.value)" class="px-4 py-2 bg-white border rounded-xl flex items-center gap-2">
+                <i data-lucide="plus" class="w-5 h-5"></i>
+                <span class="font-medium">Añadir Pregunta</span>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="state.mode === 'answer'" class="bg-white card rounded-2xl p-6">
+            <div v-if="!activeQuestion" class="text-slate-500">No hay preguntas para responder.</div>
+            <div v-else-if="!state.result">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <p class="text-sm text-slate-500">Pregunta {{ state.currentQuestion + 1 }} de {{ totalQuestions }}</p>
+                  <h2 class="text-xl font-semibold">{{ activeQuestion.prompt }}</h2>
+                </div>
+                <div class="w-48 h-2 bg-rose-100 rounded-full overflow-hidden">
+                  <div class="h-full bg-rose-500" :style="{ width: progressPercent + '%' }"></div>
+                </div>
+              </div>
+
+              <div class="space-y-3">
+                <div v-if="activeQuestion.type === 'multiple'">
+                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl">
+                    <input type="radio" :name="activeQuestion.id" :value="opt.id" @change="answerQuestion(activeQuestion.id, opt.id)" :checked="state.answers[activeQuestion.id] === opt.id" aria-label="Opcion" />
+                    <span>{{ opt.text }}</span>
+                  </label>
+                </div>
+
+                <div v-if="activeQuestion.type === 'checkbox'">
+                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl">
+                    <input type="checkbox" :value="opt.id" :checked="(state.answers[activeQuestion.id] || []).includes(opt.id)" @change="
+                      $event.target.checked
+                        ? answerQuestion(activeQuestion.id, [...(state.answers[activeQuestion.id] || []), opt.id])
+                        : answerQuestion(activeQuestion.id, (state.answers[activeQuestion.id] || []).filter(id => id !== opt.id))
+                    " aria-label="Opcion" />
+                    <span>{{ opt.text }}</span>
+                  </label>
+                </div>
+
+                <div v-if="activeQuestion.type === 'truefalse'" class="space-y-2">
+                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl">
+                    <input type="radio" :name="activeQuestion.id" :value="opt.id" :checked="state.answers[activeQuestion.id] === opt.id" @change="answerQuestion(activeQuestion.id, opt.id)" />
+                    <span>{{ opt.text }}</span>
+                  </label>
+                </div>
+
+                <div v-if="activeQuestion.type === 'matching'" class="space-y-3">
+                  <div v-for="pair in activeQuestion.pairs" :key="pair.id" class="grid grid-cols-2 gap-2 items-center">
+                    <div class="p-3 border rounded-xl bg-slate-50">{{ pair.left }}</div>
+                    <select class="input" @change="
+                      answerQuestion(activeQuestion.id, [
+                        ...(state.answers[activeQuestion.id] || []).filter(p => p.leftId !== pair.id),
+                        { leftId: pair.id, right: $event.target.value }
+                      ])
+                    " :value="(state.answers[activeQuestion.id] || []).find(p => p.leftId === pair.id)?.right || ''" aria-label="Seleccionar">
+                      <option value="">Seleccionar</option>
+                      <option v-for="r in shuffledRights(activeQuestion)" :key="pair.id + '-right-' + r" :value="r">{{ r }}</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div v-if="activeQuestion.type === 'ordering'" class="space-y-2">
+                  <p class="text-sm text-slate-500">Ordena las opciones</p>
+                  <div class="space-y-2">
+                    <div v-for="(item, idx) in orderingList(activeQuestion)" :key="item.id" class="flex items-center gap-2 p-3 border rounded-xl">
+                      <span class="text-slate-500 text-sm">{{ idx + 1 }}</span>
+                      <span class="flex-1">{{ item.text }}</span>
+                      <div class="flex gap-1">
+                        <button class="px-2 py-1 border rounded" @click="moveOrdering(activeQuestion, item.id, -1)" aria-label="Subir">
+                          <i data-lucide="chevron-up" class="w-4 h-4"></i>
+                        </button>
+                        <button class="px-2 py-1 border rounded" @click="moveOrdering(activeQuestion, item.id, 1)" aria-label="Bajar">
+                          <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="activeQuestion.type === 'blanks'" class="space-y-4">
+                  <div class="bg-slate-100 border border-slate-300 rounded-xl p-4">
+                    <p class="text-sm font-semibold text-slate-600 mb-2">Palabras disponibles:</p>
+                    <div class="flex flex-wrap gap-2">
+                      <span v-for="word in getShuffledBlankWords(activeQuestion)" :key="word" class="px-3 py-1 bg-white border border-slate-300 rounded-lg text-sm font-medium">{{ word }}</span>
+                    </div>
+                  </div>
+                  <div class="text-lg leading-relaxed" v-html="renderAnswerBlanks(activeQuestion.sentence, activeQuestion.blanks, activeQuestion.id)" @input="
+                    (e) => {
+                      if (e.target.classList.contains('inline-blank-input')) {
+                        const blankId = e.target.getAttribute('data-blank-id');
+                        answerQuestion(activeQuestion.id, { ...(state.answers[activeQuestion.id] || {}), [blankId]: e.target.value });
+                      }
+                    }
+                  "></div>
+                </div>
+              </div>
+
+              <div class="mt-6 flex items-center justify-between">
+                <button @click="prevQuestion" :disabled="state.currentQuestion === 0" class="px-4 py-2 rounded-xl border text-slate-500 disabled:opacity-50">Anterior</button>
+                <button @click="nextQuestion" class="px-6 py-2 rounded-xl bg-rose-500 text-white">{{ state.currentQuestion === totalQuestions - 1 ? 'Finalizar' : 'Siguiente' }}</button>
+              </div>
+            </div>
+
+            <div v-if="state.result" class="flex items-center justify-center min-h-[500px]">
+              <div class="text-center p-8 bg-white rounded-2xl border shadow-lg max-w-md">
+                <h3 class="text-2xl font-semibold mb-4">Resultados de la Evaluacion</h3>
+                <p class="text-6xl font-bold mb-4" :class="state.result.passed ? 'text-emerald-500' : 'text-rose-500'">{{ state.result.scorePercent }}%</p>
+                <p class="text-lg text-slate-600 mb-2">{{ state.result.correctCount }} de {{ state.result.total }} respuestas correctas</p>
+                <p class="text-sm text-slate-500">Requiere {{ state.schema.minPercent }}% para aprobar</p>
+                <div v-if="state.result.passed" class="mt-4 px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-medium">
+                  ¡Felicidades! Has aprobado
+                </div>
+                <div v-else class="mt-4 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg font-medium">
+                  Aun no alcanzas el porcentaje minimo
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+    }).mount('#app');
+  </script>
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ejemplo de Uso - Evaluaciones</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    body { background: #f8fafc; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body class="p-6">
+  <h1 class="text-2xl font-semibold mb-4">Demo de uso con postMessage</h1>
+  <p class="text-slate-600 mb-6">Esta pagina muestra como integrar <code>index.html</code> en modo creacion/edicion y en modo respuesta usando postMessage.</p>
+
+  <div class="grid lg:grid-cols-2 gap-6">
+    <!-- Builder / Edit -->
+    <div class="bg-white border rounded-2xl shadow-sm p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <p class="text-sm text-slate-500">Iframe 1</p>
+          <h2 class="text-lg font-semibold">Creacion / Edicion</h2>
+        </div>
+        <div class="flex gap-2">
+          <button id="loadBuilderSchema" class="px-3 py-2 text-sm font-medium bg-slate-900 text-white rounded-lg">Cargar esquema de ejemplo</button>
+          <button id="resetBuilderLog" class="px-3 py-2 text-sm font-medium border rounded-lg">Limpiar log</button>
+        </div>
+      </div>
+      <iframe id="builderFrame" src="./index.html?mode=edit" class="w-full h-96 border rounded-xl"></iframe>
+      <div class="mt-3">
+        <p class="text-sm font-semibold mb-1">Mensajes recibidos (schema-update)</p>
+        <pre id="builderLog" class="bg-slate-50 border rounded-xl p-3 text-xs text-slate-700 h-48 overflow-auto">(esperando mensajes...)</pre>
+      </div>
+      <div class="mt-3 bg-slate-50 border rounded-xl p-3">
+        <p class="text-sm font-semibold mb-2">Codigo para recibir:</p>
+        <pre class="text-xs text-slate-700">window.addEventListener('message', (e) => {
+  if (e.data?.type === 'schema-update') {
+    const schema = e.data.payload;
+    console.log('Schema actualizado:', schema);
+  }
+});</pre>
+        <p class="text-sm font-semibold mt-3 mb-2">Codigo para cargar esquema en edicion:</p>
+        <pre class="text-xs text-slate-700">iframe.contentWindow.postMessage({
+  type: 'schema',
+  payload: { questions: [...] }
+}, '*');</pre>
+      </div>
+    </div>
+
+    <!-- Answer -->
+    <div class="bg-white border rounded-2xl shadow-sm p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <p class="text-sm text-slate-500">Iframe 2</p>
+          <h2 class="text-lg font-semibold">Responder evaluacion</h2>
+        </div>
+        <div class="flex gap-2">
+          <button id="loadAnswerSchema" class="px-3 py-2 text-sm font-medium bg-rose-500 text-white rounded-lg">Cargar esquema de ejemplo</button>
+          <button id="resetAnswerLog" class="px-3 py-2 text-sm font-medium border rounded-lg">Limpiar log</button>
+        </div>
+      </div>
+      <iframe id="answerFrame" src="./index.html?mode=answer" class="w-full h-96 border rounded-xl"></iframe>
+      <div class="mt-3">
+        <p class="text-sm font-semibold mb-1">Mensajes recibidos (result)</p>
+        <pre id="answerLog" class="bg-slate-50 border rounded-xl p-3 text-xs text-slate-700 h-48 overflow-auto">(esperando mensajes...)</pre>
+      </div>
+      <div class="mt-3 bg-slate-50 border rounded-xl p-3">
+        <p class="text-sm font-semibold mb-2">Codigo para recibir resultados:</p>
+        <pre class="text-xs text-slate-700">window.addEventListener('message', (e) => {
+  if (e.data?.type === 'result') {
+    const result = e.data.payload;
+    console.log('Resultado:', result);
+    // result: { answers, scorePercent, correctCount, total, passed }
+  }
+});</pre>
+        <p class="text-sm font-semibold mt-3 mb-2">Codigo para cargar evaluacion:</p>
+        <pre class="text-xs text-slate-700">iframe.contentWindow.postMessage({
+  type: 'schema',
+  payload: { questions: [...] }
+}, '*');
+iframe.contentWindow.postMessage({
+  type: 'config',
+  payload: { attempts: 3, minPercent: 80 }
+}, '*');</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const builderFrame = document.getElementById('builderFrame');
+    const answerFrame = document.getElementById('answerFrame');
+    const builderLog = document.getElementById('builderLog');
+    const answerLog = document.getElementById('answerLog');
+
+    const sampleSchema = {
+      title: 'Demo Evaluacion',
+      description: 'Ejemplo de esquema',
+      attempts: 3,
+      minPercent: 80,
+      questions: [
+        {
+          id: 'q1',
+          type: 'multiple',
+          prompt: 'Color del cielo',
+          options: [
+            { id: 'a', text: 'Azul' },
+            { id: 'b', text: 'Rojo' },
+            { id: 'c', text: 'Verde' }
+          ],
+          correctAnswers: ['a']
+        },
+        {
+          id: 'q2',
+          type: 'checkbox',
+          prompt: 'Selecciona numeros pares',
+          options: [
+            { id: 'n2', text: '2' },
+            { id: 'n3', text: '3' },
+            { id: 'n4', text: '4' }
+          ],
+          correctAnswers: ['n2', 'n4']
+        },
+        {
+          id: 'q3',
+          type: 'truefalse',
+          prompt: 'La tierra es redonda',
+          options: [ { id: 'true', text: 'Verdadero' }, { id: 'false', text: 'Falso' } ],
+          correctAnswers: ['true']
+        },
+        {
+          id: 'q4',
+          type: 'matching',
+          prompt: 'Empareja letras con palabras',
+          pairs: [
+            { id: 'p1', left: 'A', right: 'Agua' },
+            { id: 'p2', left: 'B', right: 'Barco' }
+          ],
+          correctAnswers: [ { leftId: 'p1', right: 'Agua' }, { leftId: 'p2', right: 'Barco' } ]
+        },
+        {
+          id: 'q5',
+          type: 'ordering',
+          prompt: 'Ordena los pasos',
+          order: [
+            { id: 'o1', text: 'Paso 1' },
+            { id: 'o2', text: 'Paso 2' },
+            { id: 'o3', text: 'Paso 3' }
+          ],
+          correctAnswers: ['o1', 'o2', 'o3']
+        },
+        {
+          id: 'q6',
+          type: 'blanks',
+          prompt: 'Completa la frase',
+          sentence: 'En el bosque los arboles son verdes, los pajaros cantan melodias y el rio fluye cristalino.',
+          blanks: [
+            { id: 'b1', placeholder: 'arboles', answers: ['arboles'] },
+            { id: 'b2', placeholder: 'pajaros', answers: ['pajaros'] },
+            { id: 'b3', placeholder: 'rio', answers: ['rio'] }
+          ],
+          correctAnswers: [
+            { blankId: 'b1', answers: ['arboles'] },
+            { blankId: 'b2', answers: ['pajaros'] },
+            { blankId: 'b3', answers: ['rio'] }
+          ]
+        }
+      ]
+    };
+
+    const configAnswer = { attempts: 2, minPercent: 70 };
+
+    const pretty = (obj) => JSON.stringify(obj, null, 2);
+
+    const logReplace = (el, data) => {
+      const now = new Date().toISOString();
+      el.textContent = `${now}\n${pretty(data)}`;
+    };
+
+    const logAppend = (el, data) => {
+      const now = new Date().toISOString();
+      const text = `${now}\n${pretty(data)}\n\n`;
+      if (el.textContent.includes('(esperando')) el.textContent = '';
+      el.textContent += text;
+    };
+
+    const sendToBuilder = (payload) => builderFrame.contentWindow.postMessage(payload, '*');
+    const sendToAnswer = (payload) => answerFrame.contentWindow.postMessage(payload, '*');
+
+    document.getElementById('loadBuilderSchema').addEventListener('click', () => {
+      sendToBuilder({ type: 'mode', payload: 'edit' });
+      sendToBuilder({ type: 'schema', payload: JSON.parse(JSON.stringify(sampleSchema)) });
+    });
+
+    document.getElementById('loadAnswerSchema').addEventListener('click', () => {
+      sendToAnswer({ type: 'schema', payload: JSON.parse(JSON.stringify(sampleSchema)) });
+      sendToAnswer({ type: 'config', payload: configAnswer });
+    });
+
+    document.getElementById('resetBuilderLog').addEventListener('click', () => {
+      builderLog.textContent = '(esperando mensajes...)';
+    });
+    document.getElementById('resetAnswerLog').addEventListener('click', () => {
+      answerLog.textContent = '(esperando mensajes...)';
+    });
+
+    window.addEventListener('message', (event) => {
+      const { data, source } = event;
+      if (!data || typeof data !== 'object') return;
+
+      if (source === builderFrame.contentWindow) {
+        if (data.type === 'form-ready') {
+          // Request schema to start edit mode
+          sendToBuilder({ type: 'schema', payload: JSON.parse(JSON.stringify(sampleSchema)) });
+        }
+        if (data.type === 'schema-request') {
+          sendToBuilder({ type: 'schema', payload: JSON.parse(JSON.stringify(sampleSchema)) });
+        }
+        if (data.type === 'schema-update') {
+          logReplace(builderLog, data.payload);
+        }
+      }
+
+      if (source === answerFrame.contentWindow) {
+        if (data.type === 'form-ready') {
+          sendToAnswer({ type: 'schema', payload: JSON.parse(JSON.stringify(sampleSchema)) });
+          sendToAnswer({ type: 'config', payload: configAnswer });
+        }
+        if (data.type === 'schema-request') {
+          sendToAnswer({ type: 'schema', payload: JSON.parse(JSON.stringify(sampleSchema)) });
+          sendToAnswer({ type: 'config', payload: configAnswer });
+        }
+        if (data.type === 'result') {
+          logReplace(answerLog, data.payload);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
