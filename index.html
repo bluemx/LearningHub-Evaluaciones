@@ -46,7 +46,7 @@
       { value: 'blanks', label: 'Completar Espacios', icon: 'pilcrow' },
     ];
 
-    const blankSentenceHelp = 'Escribe "[blank]" para indicar donde debe ir una palabra del banco.';
+    const blankSentenceHelp = 'Escribe la oración completa. Las palabras se tomarán del banco en el orden que aparezcan.';
 
     const defaultQuestionByType = (type) => {
       const base = { id: uid(), type, prompt: '', feedback: '', correctAnswers: [] };
@@ -67,8 +67,8 @@
         return { ...base, order, correctAnswers: order.map(o => o.id) };
       }
       if (type === 'blanks') {
-        const blanks = [ { id: uid(), placeholder: 'palabra1', answers: ['palabra1'] } ];
-        return { ...base, sentence: 'Oracion con un [blank].', blanks, correctAnswers: blanks.map(b => ({ blankId: b.id, answers: b.answers })) };
+        const blanks = [ { id: uid(), placeholder: 'palabras', answers: ['palabras'] } ];
+        return { ...base, sentence: 'Las palabras se tomarán del banco en el orden que aparezcan.', blanks, correctAnswers: blanks.map(b => ({ blankId: b.id, answers: b.answers })) };
       }
       return base;
     };
