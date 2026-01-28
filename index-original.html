@@ -94,11 +94,6 @@
           childDrag: null,
           displayOrder: {},
           matchingRightOrder: {},
-          // Nuevos estados para el flujo de intentos
-          questionAttempts: {},      // { questionId: numberOfAttempts }
-          showingFeedback: false,    // Si estamos mostrando feedback
-          lastAnswerCorrect: null,   // true/false después de verificar
-          maxAttemptsPerQuestion: 3, // Máximo de intentos por pregunta
         });
 
         const queryMode = () => {
@@ -458,21 +453,8 @@
           const total = perQuestion.length || 1;
           const scorePercent = Math.round((correctCount / total) * 100);
           const passed = scorePercent >= (state.schema.minPercent || 0);
-
-          // Procesar intentos: si agotó los 3 intentos y no acertó, marcar como -1
-          const processedAttempts = {};
-          perQuestion.forEach(r => {
-            const attempts = state.questionAttempts[r.id] || 0;
-            if (!r.correct && attempts >= state.maxAttemptsPerQuestion) {
-              processedAttempts[r.id] = -1;
-            } else {
-              processedAttempts[r.id] = attempts;
-            }
-          });
-
           const resultPayload = {
             answers: JSON.parse(JSON.stringify(state.answers)),
-            attempts: processedAttempts,
             scorePercent,
             correctCount,
             total,
@@ -480,115 +462,6 @@
           };
           state.result = resultPayload;
           sendMessage({ type: 'result', payload: resultPayload });
-        };
-
-        // Verificar si el usuario ha respondido la pregunta actual
-        const hasAnswered = computed(() => {
-          const q = activeQuestion.value;
-          if (!q) return false;
-          const answer = state.answers[q.id];
-          if (answer === undefined || answer === null) return false;
-          if (q.type === 'checkbox') return Array.isArray(answer) && answer.length > 0;
-          if (q.type === 'matching') {
-            if (!Array.isArray(answer)) return false;
-            return answer.length === q.pairs.length && answer.every(a => a.right && a.right !== '');
-          }
-          if (q.type === 'ordering') return Array.isArray(answer) && answer.length > 0;
-          if (q.type === 'blanks') {
-            if (!answer || typeof answer !== 'object') return false;
-            return q.blanks.every(b => answer[b.id] && answer[b.id].trim() !== '');
-          }
-          return answer !== '';
-        });
-
-        // Obtener intentos actuales para la pregunta activa
-        const currentAttempts = computed(() => {
-          const q = activeQuestion.value;
-          if (!q) return 0;
-          return state.questionAttempts[q.id] || 0;
-        });
-
-        // Verificar si se agotaron los intentos
-        const attemptsExhausted = computed(() => {
-          return currentAttempts.value >= state.maxAttemptsPerQuestion;
-        });
-
-        // Obtener la respuesta correcta formateada para mostrar
-        const getCorrectAnswerDisplay = (q) => {
-          if (!q) return '';
-          if (q.type === 'multiple' || q.type === 'truefalse') {
-            const correctId = q.correctAnswers[0];
-            const option = q.options.find(o => o.id === correctId);
-            return option ? option.text : '';
-          }
-          if (q.type === 'checkbox') {
-            return q.options
-              .filter(o => q.correctAnswers.includes(o.id))
-              .map(o => o.text)
-              .join(', ');
-          }
-          if (q.type === 'matching') {
-            return q.pairs.map(p => `${p.left} → ${p.right}`).join(', ');
-          }
-          if (q.type === 'ordering') {
-            return q.order.map((o, idx) => `${idx + 1}. ${o.text}`).join(', ');
-          }
-          if (q.type === 'blanks') {
-            return q.blanks.map(b => b.answers[0]).join(', ');
-          }
-          return '';
-        };
-
-        // Verificar respuesta y mostrar feedback
-        const checkAnswer = () => {
-          const q = activeQuestion.value;
-          if (!q) return;
-
-          const answer = state.answers[q.id];
-          const correct = isCorrect(q, answer);
-
-          // Incrementar intentos
-          state.questionAttempts[q.id] = (state.questionAttempts[q.id] || 0) + 1;
-
-          state.lastAnswerCorrect = correct;
-          state.showingFeedback = true;
-        };
-
-        // Continuar a la siguiente pregunta
-        const continueToNext = () => {
-          state.showingFeedback = false;
-          state.lastAnswerCorrect = null;
-
-          if (state.currentQuestion < totalQuestions.value - 1) {
-            state.currentQuestion += 1;
-          } else {
-            computeResults();
-          }
-        };
-
-        // Volver a intentar (resetear respuesta actual)
-        const retryQuestion = () => {
-          const q = activeQuestion.value;
-          if (!q) return;
-
-          // Limpiar la respuesta actual
-          if (q.type === 'checkbox') {
-            state.answers[q.id] = [];
-          } else if (q.type === 'matching') {
-            state.answers[q.id] = [];
-          } else if (q.type === 'ordering') {
-            // Re-shuffle para ordering
-            state.answers[q.id] = shuffle(q.order.map(o => o.id));
-          } else if (q.type === 'blanks') {
-            state.answers[q.id] = {};
-            // Re-shuffle palabras
-            delete state.displayOrder[q.id + '-words'];
-          } else {
-            delete state.answers[q.id];
-          }
-
-          state.showingFeedback = false;
-          state.lastAnswerCorrect = null;
         };
 
         const nextQuestion = () => {
@@ -623,14 +496,6 @@
           if (q.type === 'ordering') initOrdering(q);
           if (q.type === 'multiple' || q.type === 'checkbox' || q.type === 'truefalse') ensureOptionShuffle(q);
           if (q.type === 'matching') ensureMatchingShuffle(q);
-        });
-
-        watch(() => state.showingFeedback, () => {
-          renderIcons();
-        });
-
-        watch(() => state.result, () => {
-          renderIcons();
         });
 
         watch(() => state.schema.questions, () => {
@@ -690,14 +555,6 @@
           startChildDrag,
           onChildDragOver,
           endChildDrag,
-          // Nuevas funciones para el flujo de intentos
-          hasAnswered,
-          currentAttempts,
-          attemptsExhausted,
-          checkAnswer,
-          continueToNext,
-          retryQuestion,
-          getCorrectAnswerDisplay,
         };
       },
       template: `
@@ -871,9 +728,7 @@
 
           <div v-if="state.mode === 'answer'" class="bg-white card rounded-2xl p-6">
             <div v-if="!activeQuestion" class="text-slate-500">No hay preguntas para responder.</div>
-
-            <!-- Vista de pregunta (sin feedback) -->
-            <div v-else-if="!state.result && !state.showingFeedback">
+            <div v-else-if="!state.result">
               <div class="flex items-center justify-between mb-4">
                 <div>
                   <p class="text-sm text-slate-500">Pregunta {{ state.currentQuestion + 1 }} de {{ totalQuestions }}</p>
@@ -886,14 +741,14 @@
 
               <div class="space-y-3">
                 <div v-if="activeQuestion.type === 'multiple'">
-                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl cursor-pointer hover:bg-slate-50 transition-colors">
+                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl">
                     <input type="radio" :name="activeQuestion.id" :value="opt.id" @change="answerQuestion(activeQuestion.id, opt.id)" :checked="state.answers[activeQuestion.id] === opt.id" aria-label="Opcion" />
                     <span>{{ opt.text }}</span>
                   </label>
                 </div>
 
                 <div v-if="activeQuestion.type === 'checkbox'">
-                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl cursor-pointer hover:bg-slate-50 transition-colors">
+                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl">
                     <input type="checkbox" :value="opt.id" :checked="(state.answers[activeQuestion.id] || []).includes(opt.id)" @change="
                       $event.target.checked
                         ? answerQuestion(activeQuestion.id, [...(state.answers[activeQuestion.id] || []), opt.id])
@@ -904,7 +759,7 @@
                 </div>
 
                 <div v-if="activeQuestion.type === 'truefalse'" class="space-y-2">
-                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl cursor-pointer hover:bg-slate-50 transition-colors">
+                  <label v-for="opt in shuffledOptions(activeQuestion)" :key="opt.id" class="flex items-center gap-2 p-3 border rounded-xl">
                     <input type="radio" :name="activeQuestion.id" :value="opt.id" :checked="state.answers[activeQuestion.id] === opt.id" @change="answerQuestion(activeQuestion.id, opt.id)" />
                     <span>{{ opt.text }}</span>
                   </label>
@@ -932,10 +787,10 @@
                       <span class="text-slate-500 text-sm">{{ idx + 1 }}</span>
                       <span class="flex-1">{{ item.text }}</span>
                       <div class="flex gap-1">
-                        <button class="px-2 py-1 border rounded hover:bg-slate-50" @click="moveOrdering(activeQuestion, item.id, -1)" aria-label="Subir">
+                        <button class="px-2 py-1 border rounded" @click="moveOrdering(activeQuestion, item.id, -1)" aria-label="Subir">
                           <i data-lucide="chevron-up" class="w-4 h-4"></i>
                         </button>
-                        <button class="px-2 py-1 border rounded hover:bg-slate-50" @click="moveOrdering(activeQuestion, item.id, 1)" aria-label="Bajar">
+                        <button class="px-2 py-1 border rounded" @click="moveOrdering(activeQuestion, item.id, 1)" aria-label="Bajar">
                           <i data-lucide="chevron-down" class="w-4 h-4"></i>
                         </button>
                       </div>
@@ -961,58 +816,24 @@
                 </div>
               </div>
 
-              <div class="mt-6 flex flex-col items-end gap-2">
-                <span class="text-xs text-slate-400">Intento {{ currentAttempts + 1 }} de {{ state.maxAttemptsPerQuestion }}</span>
-                <button
-                  @click="checkAnswer"
-                  :disabled="!hasAnswered"
-                  class="px-6 py-2 rounded-xl bg-rose-500 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
-                >
-                  Continuar
-                </button>
+              <div class="mt-6 flex items-center justify-between">
+                <button @click="prevQuestion" :disabled="state.currentQuestion === 0" class="px-4 py-2 rounded-xl border text-slate-500 disabled:opacity-50">Anterior</button>
+                <button @click="nextQuestion" class="px-6 py-2 rounded-xl bg-rose-500 text-white">{{ state.currentQuestion === totalQuestions - 1 ? 'Finalizar' : 'Siguiente' }}</button>
               </div>
             </div>
 
-            <!-- Vista de feedback -->
-            <div v-else-if="!state.result && state.showingFeedback" class="flex items-center justify-center min-h-[200px]">
-              <!-- Respuesta correcta -->
-              <div v-if="state.lastAnswerCorrect" class="text-center p-8 bg-white rounded-2xl border-2 border-emerald-200 shadow-lg max-w-md">
-
-                <p class="text-slate-600 mb-6">Has respondido correctamente.</p>
-                <button @click="continueToNext" class="px-6 py-2 rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition-colors">
-                  Continuar
-                </button>
-              </div>
-
-              <!-- Respuesta incorrecta (con intentos restantes) -->
-              <div v-else-if="!attemptsExhausted" class="text-center p-4 bg-white rounded-2xl border-2 border-amber-200 shadow-lg max-w-md">
-                <p class="text-slate-600 mb-2">Tu respuesta no es correcta.</p>
-                <p class="text-sm text-slate-500 mb-6">Te quedan {{ state.maxAttemptsPerQuestion - currentAttempts }} intento(s).</p>
-                <button @click="retryQuestion" class="px-6 py-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600 transition-colors">
-                  Volver a intentar
-                </button>
-              </div>
-
-              <!-- Respuesta incorrecta (sin intentos restantes) -->
-              <div v-else class="text-center p-8 bg-white rounded-2xl border-2 border-rose-200 shadow-lg max-w-lg">
-                <p class="text-slate-600 mb-4">Has agotado tus 3 intentos.</p>
-                <div class="bg-slate-50 border rounded-xl p-4 mb-6 text-left">
-                  <p class="text-sm font-semibold text-slate-700 mb-1">La respuesta correcta es:</p>
-                  <p class="text-slate-600">{{ getCorrectAnswerDisplay(activeQuestion) }}</p>
-                </div>
-                <button @click="continueToNext" class="px-6 py-2 rounded-xl bg-rose-500 text-white hover:bg-rose-600 transition-colors">
-                  Continuar
-                </button>
-              </div>
-            </div>
-
-            <!-- Vista de finalización -->
-            <div v-if="state.result" class="flex items-center justify-center min-h-[300px]">
+            <div v-if="state.result" class="flex items-center justify-center min-h-[500px]">
               <div class="text-center p-8 bg-white rounded-2xl border shadow-lg max-w-md">
-                <div class="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <i data-lucide="check-circle" class="w-10 h-10 text-emerald-500"></i>
+                <h3 class="text-2xl font-semibold mb-4">Resultados de la Evaluacion</h3>
+                <p class="text-6xl font-bold mb-4" :class="state.result.passed ? 'text-emerald-500' : 'text-rose-500'">{{ state.result.scorePercent }}%</p>
+                <p class="text-lg text-slate-600 mb-2">{{ state.result.correctCount }} de {{ state.result.total }} respuestas correctas</p>
+                <p class="text-sm text-slate-500">Requiere {{ state.schema.minPercent }}% para aprobar</p>
+                <div v-if="state.result.passed" class="mt-4 px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg font-medium">
+                  ¡Felicidades! Has aprobado
                 </div>
-                <h3 class="text-2xl font-semibold mb-4">Has concluido la evaluación</h3>
+                <div v-else class="mt-4 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg font-medium">
+                  Aun no alcanzas el porcentaje minimo
+                </div>
               </div>
             </div>
           </div>
