@@ -987,7 +987,7 @@
               <!-- Respuesta incorrecta (con intentos restantes) -->
               <div v-else-if="!attemptsExhausted" class="text-center p-4 bg-white rounded-2xl border-2 border-amber-200 shadow-lg max-w-md">
                 <p class="text-slate-600 mb-2">Tu respuesta no es correcta.</p>
-                <p class="text-sm text-slate-500 mb-6">Te quedan {{ state.maxAttemptsPerQuestion - currentAttempts }} intento(s).</p>
+                <p class="text-sm text-slate-500 mb-6">Te {{ state.maxAttemptsPerQuestion - currentAttempts === 1 ? 'queda' : 'quedan' }} {{ state.maxAttemptsPerQuestion - currentAttempts }} {{ state.maxAttemptsPerQuestion - currentAttempts === 1 ? 'intento' : 'intentos' }}.</p>
                 <button @click="retryQuestion" class="px-6 py-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600 transition-colors">
                   Volver a intentar
                 </button>
