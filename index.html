@@ -962,7 +962,7 @@
               </div>
 
               <div class="mt-6 flex flex-col items-end gap-2">
-                <span class="text-xs text-slate-400">Intento {{ currentAttempts + 1 }} de {{ state.maxAttemptsPerQuestion }}</span>
+                <span class="text-md text-slate-400">Intento {{ currentAttempts + 1 }} de {{ state.maxAttemptsPerQuestion }}</span>
                 <button
                   @click="checkAnswer"
                   :disabled="!hasAnswered"
